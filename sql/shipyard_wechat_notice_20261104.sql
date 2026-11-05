@@ -1,0 +1,16 @@
+CREATE TABLE IF NOT EXISTS sy_wechat_subscription (
+ user_id BIGINT NOT NULL,
+ template_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ credits INT NOT NULL DEFAULT 0,
+ request_key VARCHAR(64) NOT NULL,
+ authorized_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ PRIMARY KEY(user_id,template_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS sy_wechat_delivery (
+ audit_id BIGINT NOT NULL,
+ user_id BIGINT NOT NULL,
+ state VARCHAR(20) NOT NULL,
+ error_code INT NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(audit_id,user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

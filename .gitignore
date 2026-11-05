@@ -1,0 +1,89 @@
+######################################################################
+# Build Tools
+
+.gradle
+/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+######################################################################
+# IDE
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### JRebel ###
+rebel.xml
+
+### NetBeans ###
+nbproject/private/
+build/*
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+######################################################################
+# Others
+*.log
+*.xml.versionsBackup
+*.swp
+.local/
+
+# Private runtime configuration. Copy the reviewed .example templates on a new checkout.
+ruoyi-admin/src/main/resources/application.yml
+ruoyi-admin/src/main/resources/application-druid.yml
+ruoyi-admin/src/main/resources/application-shipyard.yml
+**/application-local.yml
+**/application-local.yaml
+**/application-*.local.yml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*credentials*.json
+*secrets*.json
+
+# Local runtime data, generated reports and release artifacts
+logs/
+uploads/
+uploadPath/
+artifacts/
+backups/
+*.pid
+*.rdb
+*.aof
+*.jar
+*.war
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.dump
+*.sql.gz
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+
+!*/build/*.java
+!*/build/*.html
+!*/build/*.xml

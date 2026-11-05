@@ -1,0 +1,36 @@
+# Opt in with --spring.profiles.active=druid,shipyard. Existing projects are untouched.
+server:
+  address: ${SHIPYARD_BIND:127.0.0.1}
+  port: ${SHIPYARD_PORT:8080}
+spring:
+  datasource:
+    druid:
+      master:
+        url: jdbc:mysql://${SHIPYARD_DB_HOST:127.0.0.1}:${SHIPYARD_DB_PORT:3306}/${SHIPYARD_DB:shipyard33}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+        username: ${SHIPYARD_DB_USER}
+        password: ${SHIPYARD_DB_PASSWORD}
+      statViewServlet:
+        enabled: false
+  redis:
+    host: ${SHIPYARD_REDIS_HOST:127.0.0.1}
+    port: ${SHIPYARD_REDIS_PORT:6383}
+    database: ${SHIPYARD_REDIS_DB:0}
+    password: ${SHIPYARD_REDIS_PASSWORD:}
+  devtools:
+    restart:
+      enabled: false
+token:
+  secret: ${SHIPYARD_TOKEN_SECRET}
+shipyard:
+  wechat:
+    app-id: ${SHIPYARD_WECHAT_APP_ID:}
+    app-secret: ${SHIPYARD_WECHAT_SECRET:}
+    notice-template: ${SHIPYARD_WECHAT_NOTICE_TEMPLATE:}
+    notice-fields: ${SHIPYARD_WECHAT_NOTICE_FIELDS:}
+    notice-state: ${SHIPYARD_WECHAT_NOTICE_STATE:formal}
+  bootstrap:
+    enabled: ${SHIPYARD_BOOTSTRAP:false}
+    password: ${SHIPYARD_INITIAL_PASSWORD:}
+logging:
+  level:
+    com.ruoyi: info

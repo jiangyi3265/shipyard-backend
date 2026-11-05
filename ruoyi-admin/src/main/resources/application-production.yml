@@ -1,0 +1,17 @@
+# Loaded together with druid,shipyard on the dedicated production service.
+ruoyi:
+  profile: ${SHIPYARD_UPLOAD_PATH:/opt/shipyard33/shared/uploads}
+server:
+  tomcat:
+    accept-count: 100
+    threads:
+      max: 64
+      min-spare: 8
+spring:
+  datasource:
+    druid:
+      initialSize: 3
+      minIdle: 3
+      maxActive: 15
+swagger:
+  enabled: false
