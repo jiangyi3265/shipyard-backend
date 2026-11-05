@@ -293,11 +293,13 @@ public class ShipyardService {
         if(prior.isEmpty()) ledger(pid,title,amount,day,note,"manual",key);
         else ShipyardIdempotency.ledger(prior.get(0),pid,access.uid(),title,amount,day,note);
     }
-    @Transactional public void complete(long areaId) {
+    @Transactional(isolation=Isolation.READ_COMMITTED) public void complete(long areaId) {
         access.require("work:complete"); Map<String,Object> area=one("SELECT * FROM sy_area WHERE id=? FOR UPDATE",areaId); access.project(number(area.get("project_id")));
         check(area.get("completed_at")==null,"该区域已完工");
         check(area.get("completion_requested_by")==null||number(area.get("completion_requested_by"))!=access.uid(),"不能确认自己提交的完工申请");
-        List<Map<String,Object>> current=db.queryForList("SELECT * FROM sy_record WHERE area_id=? ORDER BY id FOR UPDATE",areaId);
+        // The area lock serializes submissions. Locking records here would invert resubmission's record -> area order.
+        // READ_COMMITTED sees submissions committed while this request was waiting for the area lock.
+        List<Map<String,Object>> current=db.queryForList("SELECT * FROM sy_record WHERE area_id=? ORDER BY id",areaId);
         check(current.stream().noneMatch(r->Arrays.asList("待审批","已退回").contains(r.get("status"))),"该区域仍有待审批或退回单据");
         List<Map<String,Object>> records=current.stream().filter(r->"用工".equals(r.get("kind"))&&Arrays.asList("待结算","已结算").contains(r.get("status"))).collect(Collectors.toList());
         check(!records.isEmpty(),"该区域没有已审批的用工记录");
@@ -305,11 +307,11 @@ public class ShipyardService {
         for(Map<String,Object> r:records) audit(str(r,"id"),"施工完工",str(r,"status"),str(r,"status"),"施工完成，财务结算独立处理",body(r));
     }
     /** A leader asks the project manager to confirm completion; the area is archived only by complete(). */
-    @Transactional public void requestCompletion(long areaId) {
+    @Transactional(isolation=Isolation.READ_COMMITTED) public void requestCompletion(long areaId) {
         access.require("work:submit"); Map<String,Object> area=one("SELECT * FROM sy_area WHERE id=? FOR UPDATE",areaId); access.project(number(area.get("project_id")));
         check(area.get("completed_at")==null,"该区域已完工");
         check(area.get("completion_requested_at")==null,"该区域已提交完工，等待项目经理确认");
-        List<Map<String,Object>> current=db.queryForList("SELECT * FROM sy_record WHERE area_id=? AND kind='用工' ORDER BY id FOR UPDATE",areaId);
+        List<Map<String,Object>> current=db.queryForList("SELECT * FROM sy_record WHERE area_id=? AND kind='用工' ORDER BY id",areaId);
         check(current.stream().noneMatch(r->Arrays.asList("待审批","已退回").contains(r.get("status"))),"该区域仍有待审批或退回的用工单据，处理后再提交完工");
         List<Map<String,Object>> own=current.stream().filter(r->number(r.get("created_by"))==access.uid()&&Arrays.asList("待结算","已结算").contains(r.get("status"))).collect(Collectors.toList());
         check(!own.isEmpty(),"您在该区域没有已审批的用工记录，不能提交完工");
@@ -317,7 +319,7 @@ public class ShipyardService {
         // Audit rows on the requester's work records feed the in-app messages of reviewers.
         for(Map<String,Object> r:own) audit(str(r,"id"),"提交完工",str(r,"status"),str(r,"status"),"申请确认"+area.get("name")+"施工完工",body(r));
     }
-    @Transactional public void rejectCompletion(long areaId,Map<String,Object> b) {
+    @Transactional(isolation=Isolation.READ_COMMITTED) public void rejectCompletion(long areaId,Map<String,Object> b) {
         access.require("work:complete"); Map<String,Object> area=one("SELECT * FROM sy_area WHERE id=? FOR UPDATE",areaId); access.project(number(area.get("project_id")));
         String reason=required(b,"reason",200);
         check(area.get("completed_at")==null,"该区域已完工");
