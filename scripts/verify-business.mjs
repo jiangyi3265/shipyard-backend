@@ -53,7 +53,7 @@ assert.equal(concurrent.filter(r=>r.code===200).length,1);
 state=await api('sy_accountant','/shipyard/bootstrap');assert.ok(selected.every(l=>state.payroll.find(x=>x.id===l.id).paid));
 const batch=state.payroll.find(x=>x.id===selected[0].id).paymentId;
 assert.equal(state.transactions.filter(t=>t.source==='payroll'&&t.sourceId===batch&&t.amount===-wages).length,1);report('工资结算事务及并发防重复付款');
-async function upload(user){const data=new FormData();data.append('file',new Blob([fs.readFileSync(new URL('../../船厂/static/images/receipt-1.jpg',import.meta.url))],{type:'image/jpeg'}),'receipt.jpg');const r=await fetch(base+'/shipyard/files',{method:'POST',headers:{Authorization:'Bearer '+tokens[user]},body:data});const json=await r.json();assert.equal(json.code,200);return json.data.id;}
+async function upload(user){const data=new FormData();data.append('file',new Blob([fs.readFileSync(new URL('../../船厂/static/test/receipt-placeholder.png',import.meta.url))],{type:'image/png'}),'receipt.png');const r=await fetch(base+'/shipyard/files',{method:'POST',headers:{Authorization:'Bearer '+tokens[user]},body:data});const json=await r.json();assert.equal(json.code,200);return json.data.id;}
 const file=await upload('sy_leader');await api('sy_safety','/shipyard/files/'+file.slice(5),'GET',undefined,403);
 let expense=await api('sy_leader','/shipyard/records','POST',{requestKey:key(),projectId:p.id,kind:'报销',category:'劳保用品',amount:98.5,note:'自动化报销验证',files:[file],date});
 await api('sy_accountant','/shipyard/records/'+expense.id+'/payment','POST',{version:0,date,proof:file,method:'银行转账'},400);
