@@ -178,7 +178,8 @@ public class ShipyardIdempotencyTest {
         when(db.queryForList("SELECT * FROM sy_payroll_batch WHERE request_key=?",KEY)).thenReturn(Collections.singletonList(batch()));
         when(db.queryForList("SELECT id FROM sy_work_line WHERE payment_id=? ORDER BY id",Long.class,"batch-one"))
                 .thenReturn(Arrays.asList(3L,5L));
-        Map<String,Object> request = map("projectId",1,"month","2026-11","lineIds",Arrays.asList("5","3"),"requestKey",KEY);
+        Map<String,Object> request = map("projectId",1,"month","2026-11","lineIds",Arrays.asList("5","3"),"requestKey",KEY,
+                "date",DAY,"method","银行转账","proof","file:0f0e0d0c-0b0a-4900-8000-000000000001");
         assertEquals(new BigDecimal("123.45"),service(db).payroll(request));
         request.put("lineIds",Arrays.asList(3L,6L));
         conflict(() -> service(db).payroll(request));
@@ -189,7 +190,9 @@ public class ShipyardIdempotencyTest {
         JdbcTemplate db = mock(JdbcTemplate.class);
         when(db.queryForList("SELECT project_id,created_by,title,amount,business_date,note FROM sy_ledger WHERE source_kind='manual' AND source_id=?",KEY))
                 .thenReturn(Collections.singletonList(entry()));
-        Map<String,Object> request = map("projectId",1,"title","材料收入","date",DAY,"amount","100.00","note","已收款","requestKey",KEY);
+        when(db.queryForObject("SELECT COUNT(*) FROM sy_file WHERE id=? AND owner_id=?",Integer.class,"0f0e0d0c-0b0a-4900-8000-000000000002",7L)).thenReturn(1);
+        Map<String,Object> request = map("projectId",1,"title","材料收入","date",DAY,"amount","100.00","note","已收款","requestKey",KEY,
+                "files",Arrays.asList("file:0f0e0d0c-0b0a-4900-8000-000000000002"));
         service(db).manualLedger(request);
         request.put("amount",101);
         conflict(() -> service(db).manualLedger(request));

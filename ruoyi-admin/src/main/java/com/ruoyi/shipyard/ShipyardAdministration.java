@@ -47,7 +47,14 @@ public class ShipyardAdministration {
         } else if("area".equals(type)) {
             long pid=number(b.get("projectId")); access.project(pid);
             Object area=decimal(b.get("area"),true),rate=decimal(b.get("rate"),true);
-            if(id==0) insert("INSERT INTO sy_area(project_id,name,area,rate) VALUES(?,?,?,?)",pid,name,area,rate);
+            // Q05: optional responsible leader; must be an active leader account in this project's scope.
+            Long leader=b.get("leaderId")==null||"".equals(b.get("leaderId"))?null:number(b.get("leaderId"));
+            if(leader!=null) {
+                check(db.queryForObject("SELECT COUNT(*) FROM sys_user u JOIN sys_user_role ur ON ur.user_id=u.user_id JOIN sys_role r ON r.role_id=ur.role_id WHERE u.user_id=? AND u.status='0' AND u.del_flag='0' AND r.role_key='sy_leader' AND r.status='0' AND r.del_flag='0'",Integer.class,leader)>0,"负责组长必须是有效的组长账号");
+                check(access.projectAllowedFor(leader,pid),"负责组长未分配该工程");
+            }
+            if(id==0) insert("INSERT INTO sy_area(project_id,name,area,rate,leader_id) VALUES(?,?,?,?,?)",pid,name,area,rate,leader);
+            else if(b.containsKey("leaderId")) check(db.update("UPDATE sy_area SET name=?,area=?,rate=?,leader_id=? WHERE id=? AND project_id=? AND completed_at IS NULL",name,area,rate,leader,id,pid)==1,"区域不存在或已完工");
             else check(db.update("UPDATE sy_area SET name=?,area=?,rate=? WHERE id=? AND project_id=? AND completed_at IS NULL",name,area,rate,id,pid)==1,"区域不存在或已完工");
         } else if("person".equals(type)) {
             String category=ShipyardTeams.category(b);
@@ -119,6 +126,7 @@ public class ShipyardAdministration {
         List<String> role=db.queryForList("SELECT role_key FROM sys_role WHERE role_id=? AND role_key LIKE 'sy_%'",String.class,roleId);
         check(!role.isEmpty()&&!"sy_admin".equals(role.get(0)),"管理员权限不可在此修改");
         check(b.get("permissions") instanceof List,"权限列表格式错误");
+        check(!((List<?>)b.get("permissions")).contains("shipyard:account:edit"),"账号权限管理只能由管理员角色持有");
         List<Long> menuIds=new ArrayList<>();
         for(Object permission:(List<?>)b.get("permissions")) {
             List<Long> menus=db.queryForList("SELECT menu_id FROM sys_menu WHERE perms=? AND perms LIKE 'shipyard:%'",Long.class,permission);
@@ -134,12 +142,14 @@ public class ShipyardAdministration {
         String username=required(b,"username",20),name=required(b,"name",30),status=required(b,"status",1);
         check(username.matches("[A-Za-z0-9_]{3,20}")&&Arrays.asList("0","1").contains(status),"账号或状态无效");
         List<Long> roles=ids(b.get("roleIds"));
-        boolean allProjects=false;
+        boolean allProjects=false;Set<String> roleKeys=new HashSet<>();
         for(Long role:roles) {
             List<String> keys=db.queryForList("SELECT role_key FROM sys_role WHERE role_id=? AND role_key LIKE 'sy_%' AND status='0' AND del_flag='0'",String.class,role);
-            check(keys.size()==1,"只能配置有效的船厂业务角色");
+            check(keys.size()==1,"只能配置有效的船厂业务角色");roleKeys.add(keys.get(0));
             if(Arrays.asList("sy_admin","sy_manager","sy_owner").contains(keys.get(0))) allProjects=true;
         }
+        // Q01: a leader only sees their own work, so the accountant role would lose its finance duties.
+        check(allProjects||!(roleKeys.contains("sy_leader")&&roleKeys.contains("sy_accountant")),"组长和会计不能分配给同一账号：组长只能查看本人单据，会计需要查看和结算全部财务");
         check(b.get("projectIds") instanceof List,"工程范围格式错误");
         List<Long> projects=((List<?>)b.get("projectIds")).stream().map(ShipyardService::number).distinct().collect(java.util.stream.Collectors.toList());
         check(!"0".equals(status) || allProjects || !projects.isEmpty(),"请至少分配一个工程");
@@ -156,7 +166,9 @@ public class ShipyardAdministration {
         db.update("DELETE FROM sy_project_member WHERE user_id=?",id);
         for(Long project:projects) db.update("INSERT INTO sy_project_member(project_id,user_id) VALUES(?,?)",project,id);
         if(category!=null) db.update("INSERT INTO sy_user_team(user_id,team_category) VALUES(?,?) ON DUPLICATE KEY UPDATE team_category=VALUES(team_category)",id,category);
-        final long userId=id;
+        revokeSessionsAfterCommit(id);
+    }
+    void revokeSessionsAfterCommit(long userId) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
                 for(String key:redis.keys(CacheConstants.LOGIN_TOKEN_KEY+"*")) {
@@ -165,5 +177,14 @@ public class ShipyardAdministration {
                 }
             }
         });
+    }
+    /** Q21: an administrator unbinds a lost/changed WeChat; that WeChat may apply again and old sessions end. */
+    @Transactional public void unbindWechat(long userId) {
+        access.require("account:edit");
+        check(userId!=1,"超级管理员请使用若依个人资料修改");
+        List<Map<String,Object>> rows=db.queryForList("SELECT id FROM sy_wechat_registration WHERE user_id=? AND status='approved' FOR UPDATE",userId);
+        check(rows.size()==1,"该账号没有绑定微信");
+        db.update("UPDATE sy_wechat_registration SET status='rejected',user_id=NULL,review_reason='管理员已解绑该微信，如需继续使用请重新提交申请',reviewed_by=?,reviewed_at=NOW(),version=version+1 WHERE id=?",access.uid(),rows.get(0).get("id"));
+        revokeSessionsAfterCommit(userId);
     }
 }

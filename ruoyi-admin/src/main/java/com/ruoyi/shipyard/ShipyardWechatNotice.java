@@ -47,13 +47,58 @@ public class ShipyardWechatNotice {
         if(!configured())return;
         // Only send the applicant's own subsequent progress, never other leaders' work or historic events.
         List<Map<String,Object>> jobs=db.queryForList("SELECT a.id AS auditId,r.created_by AS userId,r.id,r.title,r.kind,a.to_status AS status,DATE_FORMAT(a.created_at,'%Y-%m-%d %H:%i') AS time,p.name AS project,w.open_id FROM sy_audit a JOIN sy_record r ON r.id=a.record_id JOIN sy_project p ON p.id=r.project_id JOIN sy_wechat_registration w ON w.user_id=r.created_by AND w.status='approved' AND w.app_id=? JOIN sys_user u ON u.user_id=w.user_id AND u.status='0' AND u.del_flag='0' JOIN sy_wechat_subscription s ON s.user_id=u.user_id AND s.template_id=? AND s.credits>0 LEFT JOIN sy_wechat_delivery d ON d.audit_id=a.id AND d.user_id=u.user_id WHERE d.audit_id IS NULL AND a.actor_id<>r.created_by AND a.created_at>=s.authorized_at AND a.created_at>DATE_SUB(NOW(),INTERVAL 1 DAY) AND EXISTS(SELECT 1 FROM sys_user_role ur JOIN sys_role ro ON ro.role_id=ur.role_id WHERE ur.user_id=u.user_id AND ro.status='0' AND ro.del_flag='0' AND LEFT(ro.role_key,3)='sy_') AND (EXISTS(SELECT 1 FROM sys_user_role ur JOIN sys_role ro ON ro.role_id=ur.role_id WHERE ur.user_id=u.user_id AND ro.status='0' AND ro.del_flag='0' AND ro.role_key IN ('sy_admin','sy_manager','sy_owner')) OR EXISTS(SELECT 1 FROM sy_project_member pm WHERE pm.user_id=u.user_id AND pm.project_id=r.project_id)) ORDER BY a.id LIMIT 20",appId,template);
-        for(Map<String,Object> job:jobs){
+        int sent=0;
+        for(Map<String,Object> job:jobs){ dispatch(job); sent++; }
+        if(sent<20) for(Map<String,Object> job:handlerJobs(20-sent)) dispatch(job);
+    }
+    /** Q14: the permission that handles the next step of an audited event, or null when nobody needs to act. */
+    static String nextPermission(String action,String kind,String status){
+        if("提交完工".equals(action))return "work:complete";
+        switch(status){
+            case "待审批": case "作废待确认": return approvePermission(kind);
+            case "待负责人签字": return "expense:confirm";
+            case "待付款": return "expense:pay";
+            case "会计待处理": return "fine:handle";
+            case "待结算": return "审批通过".equals(action)?"payroll:pay":null;
+            default: return null;
+        }
+    }
+    /** New to-do items for subscribed handlers: right permission, project scope, never the actor or (for approvals) the applicant. */
+    List<Map<String,Object>> handlerJobs(int limit){
+        List<Map<String,Object>> subscribers=db.queryForList("SELECT u.user_id AS userId,w.open_id,DATE_FORMAT(s.authorized_at,'%Y-%m-%d %H:%i:%s.%f') AS authorizedAt FROM sy_wechat_registration w JOIN sys_user u ON u.user_id=w.user_id AND u.status='0' AND u.del_flag='0' JOIN sy_wechat_subscription s ON s.user_id=u.user_id AND s.template_id=? AND s.credits>0 WHERE w.status='approved' AND w.app_id=?",template,appId);
+        List<Map<String,Object>> jobs=new ArrayList<>();
+        if(subscribers.isEmpty())return jobs;
+        List<Map<String,Object>> events=db.queryForList("SELECT a.id AS auditId,a.actor_id AS actorId,a.action,r.created_by AS applicant,r.id,r.title,r.kind,r.project_id AS projectId,r.area_id AS areaId,a.to_status AS status,DATE_FORMAT(a.created_at,'%Y-%m-%d %H:%i') AS time,p.name AS project,DATE_FORMAT(a.created_at,'%Y-%m-%d %H:%i:%s.%f') AS createdAt FROM sy_audit a JOIN sy_record r ON r.id=a.record_id JOIN sy_project p ON p.id=r.project_id WHERE a.created_at>DATE_SUB(NOW(),INTERVAL 1 DAY) AND (a.action='提交完工' OR a.to_status IN ('待审批','待负责人签字','待付款','会计待处理','作废待确认') OR (a.to_status='待结算' AND a.action='审批通过')) ORDER BY a.id LIMIT 500");
+        Set<String> areaEvents=new HashSet<>();
+        for(Map<String,Object> event:events){
+            String permission=nextPermission(str(event,"action"),str(event,"kind"),str(event,"status"));
+            if(permission==null)continue;
+            for(Map<String,Object> user:subscribers){
+                long uid=number(user.get("userId"));
+                if(uid==number(event.get("actorId")))continue;
+                if(permission.endsWith(":approve")||"expense:confirm".equals(permission)){ if(uid==number(event.get("applicant")))continue; }
+                if(str(event,"createdAt").compareTo(str(user,"authorizedAt"))<0)continue;
+                // A completion request writes one audit per record; notify each handler once per request.
+                if("提交完工".equals(event.get("action"))&&!areaEvents.add(uid+"|"+event.get("areaId")+"|"+event.get("time")))continue;
+                if(db.queryForObject("SELECT COUNT(*) FROM sy_wechat_delivery WHERE audit_id=? AND user_id=?",Integer.class,event.get("auditId"),uid)>0)continue;
+                Set<String> grants=access.permissionsOf(uid);
+                if(!(grants.contains("*:*:*")||grants.contains("shipyard:"+permission)))continue;
+                if(!access.projectAllowedFor(uid,number(event.get("projectId"))))continue;
+                Map<String,Object> job=new LinkedHashMap<>(event);job.put("userId",uid);job.put("open_id",user.get("open_id"));
+                if("提交完工".equals(event.get("action")))job.put("status","待确认完工");
+                jobs.add(job);
+                if(jobs.size()>=limit)return jobs;
+            }
+        }
+        return jobs;
+    }
+    void dispatch(Map<String,Object> job){
             Boolean claimed=tx.execute(s->{
                 int taken=db.update("UPDATE sy_wechat_subscription SET credits=credits-1 WHERE user_id=? AND template_id=? AND credits>0",job.get("userId"),template);
                 if(taken==0)return false;
                 if(db.update("INSERT IGNORE INTO sy_wechat_delivery(audit_id,user_id,state) VALUES(?,?,'sending')",job.get("auditId"),job.get("userId"))==0){s.setRollbackOnly();return false;}return true;
             });
-            if(!Boolean.TRUE.equals(claimed))continue;
+            if(!Boolean.TRUE.equals(claimed))return;
             try {
                 JSONObject data=new JSONObject();JSONObject mapping=JSON.parseObject(fields);
                 for(String key:mapping.keySet()) {String value=String.valueOf(job.get(mapping.getString(key)));int max=key.startsWith("phrase")?5:key.startsWith("thing")?20:32;data.put(key,map("value",truncate(value,max)));}
@@ -65,7 +110,6 @@ public class ShipyardWechatNotice {
             } catch(Exception e) { // Timeout is ambiguous: do not retry and risk duplicate push.
                 db.update("UPDATE sy_wechat_delivery SET state='unknown' WHERE audit_id=? AND user_id=?",job.get("auditId"),job.get("userId"));
             }
-        }
     }
     static String truncate(String value,int max){return value.substring(0,value.offsetByCodePoints(0,Math.min(max,value.codePointCount(0,value.length()))));}
     static int responseCode(JSONObject response)throws IOException{

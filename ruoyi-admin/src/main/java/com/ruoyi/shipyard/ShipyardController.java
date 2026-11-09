@@ -17,16 +17,24 @@ public class ShipyardController {
     private final ShipyardAdministration admin;
     private final ShipyardAccess access;
     private final JdbcTemplate db;
-    public ShipyardController(ShipyardService service,ShipyardAdministration admin,ShipyardAccess access,JdbcTemplate db) { this.service=service; this.admin=admin; this.access=access; this.db=db; }
+    private final ShipyardReversals reversals;
+    public ShipyardController(ShipyardService service,ShipyardAdministration admin,ShipyardAccess access,JdbcTemplate db,ShipyardReversals reversals) { this.service=service; this.admin=admin; this.access=access; this.db=db; this.reversals=reversals; }
     @GetMapping("/bootstrap") public AjaxResult bootstrap() { return AjaxResult.success(service.bootstrap()); }
     @GetMapping("/records/{id}") public AjaxResult detail(@PathVariable String id) { return AjaxResult.success(service.detail(id)); }
     @PostMapping("/records") public AjaxResult submit(@RequestBody Map<String,Object> body) { return AjaxResult.success(service.submit(body,null)); }
     @PutMapping("/records/{id}") public AjaxResult resubmit(@PathVariable String id,@RequestBody Map<String,Object> body) { return AjaxResult.success(service.submit(body,id)); }
     @PostMapping("/records/{id}/review") public AjaxResult review(@PathVariable String id,@RequestBody Map<String,Object> body) { return AjaxResult.success(service.review(id,body)); }
+    @PostMapping("/records/{id}/void-request") public AjaxResult requestVoid(@PathVariable String id,@RequestBody Map<String,Object> body) { return AjaxResult.success(service.requestVoid(id,body)); }
+    @PostMapping("/records/{id}/void-review") public AjaxResult reviewVoid(@PathVariable String id,@RequestBody Map<String,Object> body) { return AjaxResult.success(service.reviewVoid(id,body)); }
     @PostMapping("/records/{id}/payment") public AjaxResult payment(@PathVariable String id,@RequestBody Map<String,Object> body) { return AjaxResult.success(service.payExpense(id,body)); }
     @PostMapping("/records/{id}/fine-receipt") public AjaxResult fine(@PathVariable String id,@RequestBody Map<String,Object> body) { return AjaxResult.success(service.handleFine(id,body)); }
     @PostMapping("/payroll/settle") public AjaxResult payroll(@RequestBody Map<String,Object> body) { return AjaxResult.success(service.payroll(body)); }
     @PostMapping("/ledger") public AjaxResult ledger(@RequestBody Map<String,Object> body) { service.manualLedger(body); return AjaxResult.success(); }
+    @PostMapping("/ledger/opening") public AjaxResult opening(@RequestBody Map<String,Object> body) { service.openingBalance(body); return AjaxResult.success(); }
+    @PostMapping("/ledger/{id}/reversal") public AjaxResult reversal(@PathVariable String id,@RequestBody Map<String,Object> body) { reversals.request(id,body); return AjaxResult.success(); }
+    @PostMapping("/ledger/reversals/{id}/review") public AjaxResult reviewReversal(@PathVariable long id,@RequestBody Map<String,Object> body) { reversals.review(id,body); return AjaxResult.success(); }
+    @PostMapping("/areas/{id}/reopen") public AjaxResult reopen(@PathVariable long id,@RequestBody Map<String,Object> body) { service.reopenArea(id,body); return AjaxResult.success(); }
+    @PostMapping("/accounts/{id}/wechat-unbind") public AjaxResult unbind(@PathVariable long id) { admin.unbindWechat(id); return AjaxResult.success(); }
     @PostMapping("/areas/{id}/complete") public AjaxResult complete(@PathVariable long id) { service.complete(id); return AjaxResult.success(); }
     @PostMapping("/areas/{id}/completion-request") public AjaxResult requestCompletion(@PathVariable long id) { service.requestCompletion(id); return AjaxResult.success(); }
     @PostMapping("/areas/{id}/completion-reject") public AjaxResult rejectCompletion(@PathVariable long id,@RequestBody Map<String,Object> body) { service.rejectCompletion(id,body); return AjaxResult.success(); }
@@ -57,6 +65,10 @@ public class ShipyardController {
         boolean allowed=number(f.get("owner_id"))==access.uid();
         if(!allowed) for(Map<String,Object> r:db.queryForList("SELECT r.* FROM sy_record r JOIN sy_record_file f ON f.record_id=r.id WHERE f.file_id=?",id)) {
             try { if(access.canRead(r)) { allowed=true; break; } } catch(ServiceException ignored) { }
+        }
+        // Q22: manual and opening ledger vouchers follow the ledger's visibility (finance view, or the entry's creator).
+        if(!allowed) for(Map<String,Object> l:db.queryForList("SELECT l.project_id,l.created_by FROM sy_ledger l JOIN sy_ledger_file f ON f.ledger_id=l.id WHERE f.file_id=?",id)) {
+            try { access.project(number(l.get("project_id"))); if(access.can("finance:view")||access.can("payroll:pay")||number(l.get("created_by"))==access.uid()) { allowed=true; break; } } catch(ServiceException ignored) { }
         }
         if(!allowed) throw new ServiceException("无权查看此凭证",403);
         return AjaxResult.success("读取成功","data:"+f.get("mime")+";base64,"+Base64.getEncoder().encodeToString((byte[])f.get("content")));

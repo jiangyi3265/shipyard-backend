@@ -31,7 +31,28 @@ public class ShipyardAccess {
         Set<String> grants=new HashSet<>(db.queryForList("SELECT DISTINCT m.perms FROM sys_menu m JOIN sys_role_menu rm ON rm.menu_id=m.menu_id JOIN sys_role r ON r.role_id=rm.role_id JOIN sys_user_role ur ON ur.role_id=r.role_id WHERE ur.user_id=? AND r.status='0' AND r.del_flag='0' AND m.status='0' AND m.perms LIKE 'shipyard:%'", String.class, uid()));
         if(allProjects()) grants.add("shipyard:finance:view");
         if(ownWorkOnly()) grants.removeAll(Arrays.asList("shipyard:finance:view","shipyard:payroll:pay"));
+        // Q23: account and permission management is reserved for administrators.
+        grants.remove("shipyard:account:edit");
         return grants;
+    }
+    static final List<String> GLOBAL_ROLES=Arrays.asList("sy_admin","sy_manager","sy_owner");
+    /** Effective grants of another active shipyard account, e.g. to address the next handler. Empty when inactive. */
+    public Set<String> permissionsOf(long user) {
+        if(db.queryForObject("SELECT COUNT(*) FROM sys_user WHERE user_id=? AND status='0' AND del_flag='0'",Integer.class,user)!=1) return Collections.emptySet();
+        List<String> keys=db.queryForList("SELECT r.role_key FROM sys_role r JOIN sys_user_role ur ON ur.role_id=r.role_id WHERE ur.user_id=? AND r.status='0' AND r.del_flag='0'",String.class,user);
+        if(user!=1 && keys.stream().noneMatch(r->r.startsWith("sy_"))) return Collections.emptySet();
+        if(user==1 || keys.contains("sy_admin")) return new HashSet<>(Collections.singletonList("*:*:*"));
+        boolean all=keys.stream().anyMatch(GLOBAL_ROLES::contains);
+        Set<String> grants=new HashSet<>(db.queryForList("SELECT DISTINCT m.perms FROM sys_menu m JOIN sys_role_menu rm ON rm.menu_id=m.menu_id JOIN sys_role r ON r.role_id=rm.role_id JOIN sys_user_role ur ON ur.role_id=r.role_id WHERE ur.user_id=? AND r.status='0' AND r.del_flag='0' AND m.status='0' AND m.perms LIKE 'shipyard:%'",String.class,user));
+        if(all) grants.add("shipyard:finance:view");
+        if(keys.contains("sy_leader") && !all) grants.removeAll(Arrays.asList("shipyard:finance:view","shipyard:payroll:pay"));
+        grants.remove("shipyard:account:edit");
+        return grants;
+    }
+    public boolean projectAllowedFor(long user,long project) {
+        List<String> keys=db.queryForList("SELECT r.role_key FROM sys_role r JOIN sys_user_role ur ON ur.role_id=r.role_id WHERE ur.user_id=? AND r.status='0' AND r.del_flag='0'",String.class,user);
+        return user==1 || keys.stream().anyMatch(GLOBAL_ROLES::contains)
+            || db.queryForObject("SELECT COUNT(*) FROM sy_project_member WHERE project_id=? AND user_id=?",Integer.class,project,user)>0;
     }
     public boolean can(String permission) { Set<String> p=permissions(); return p.contains("*:*:*") || p.contains("shipyard:"+permission); }
     public void require(String permission) { if (!can(permission)) throw new ServiceException("没有该操作权限",403); }

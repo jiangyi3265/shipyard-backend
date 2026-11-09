@@ -47,7 +47,7 @@ let contract=await api('sy_leader','/shipyard/records','POST',{...submit,request
 contract=await api('sy_manager','/shipyard/records/'+contract.id+'/review','POST',{version:0,accept:true});
 report('加班与正常时薪一致、工资快照、单日累计工时限制及包工分配合计');
 state=await api('sy_accountant','/shipyard/bootstrap');const selected=state.payroll.filter(l=>[work.id,overtime.id,contract.id].some(id=>[...work.lines,...overtime.lines,...contract.lines].some(x=>x.id===l.id))&&!l.paid);
-const wages=selected.reduce((s,l)=>s+l.amount,0),pay={projectId:p.id,month:date.slice(0,7),lineIds:selected.map(l=>l.id),requestKey:key()};
+const wages=selected.reduce((s,l)=>s+l.amount,0),pay={projectId:p.id,month:date.slice(0,7),lineIds:selected.map(l=>l.id),requestKey:key(),date,method:'银行转账',proof:await upload('sy_accountant')};
 const concurrent=await Promise.all([0,1].map(async()=>{const r=await fetch(base+'/shipyard/payroll/settle',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokens.sy_accountant},body:JSON.stringify({...pay,requestKey:key()})});return r.json();}));
 assert.equal(concurrent.filter(r=>r.code===200).length,1);
 state=await api('sy_accountant','/shipyard/bootstrap');assert.ok(selected.every(l=>state.payroll.find(x=>x.id===l.id).paid));
@@ -67,7 +67,7 @@ report('私有凭证权限、报销两级签字及一次性付款归档');
 let fine=await api('sy_safety','/shipyard/records','POST',{requestKey:key(),projectId:p.id,areaId:area.id,kind:'罚款',amount:20,person:people[0].id,note:'自动化罚款验证',date});
 fine=await api('sy_manager','/shipyard/records/'+fine.id+'/review','POST',{version:0,accept:true});
 fine=await api('sy_accountant','/shipyard/records/'+fine.id+'/fine-receipt','POST',{version:fine.version,note:'现金收款，测试凭证',date});assert.equal(fine.status,'已处理');
-await api('sy_accountant','/shipyard/ledger','POST',{projectId:p.id,requestKey:key(),title:'项目测试进度款',amount:1000,date,note:'验证收款'});
+await api('sy_accountant','/shipyard/ledger','POST',{projectId:p.id,requestKey:key(),title:'项目测试进度款',amount:1000,date,note:'验证收款',files:[await upload('sy_accountant')]});
 state=await api('sy_accountant','/shipyard/bootstrap');assert.equal(state.transactions.filter(t=>t.sourceId===fine.id).length,1);assert.equal(state.transactions.find(t=>t.sourceId===expense.id).amount,-98.5);report('罚款独立收款及报销、工资、收支统一台账');
 const suffix=Date.now().toString().slice(-8),newName='隔离测试'+suffix;
 await api('admin','/shipyard/master/project','PUT',{name:newName,title:'数据范围测试',price:1000,area:100,overtimeRate:2});
@@ -91,6 +91,8 @@ const finishArea=(await api('admin','/shipyard/bootstrap')).areas.find(a=>a.name
 let finish=await api('sy_leader','/shipyard/records','POST',{...submit,requestKey:key(),areaId:finishArea.id,type:'包工',start:date,end:date,amount:100,allocations:Object.fromEntries(people.map(p=>[p.id,50]))});
 await api('sy_manager','/shipyard/areas/'+finishArea.id+'/complete','POST',{},400);
 finish=await api('sy_manager','/shipyard/records/'+finish.id+'/review','POST',{version:0,accept:true});
+await api('sy_manager','/shipyard/areas/'+finishArea.id+'/complete','POST',{},400);// Q04: no direct completion
+await api('sy_leader','/shipyard/areas/'+finishArea.id+'/completion-request','POST',{});
 await api('sy_manager','/shipyard/areas/'+finishArea.id+'/complete','POST',{});
 assert.equal((await api('sy_manager','/shipyard/records/'+finish.id)).status,'待结算');report('完工归档与财务结算状态独立');
 fs.writeFileSync(new URL('.local/verification.json',root),JSON.stringify({date:new Date().toISOString(),results,fixtures:{work:work.id,expense:expense.id,fine:fine.id,contract:contract.id}},null,2));

@@ -50,9 +50,9 @@ public class ShipyardAccessMembershipTest {
 
     @Test public void removingLastBusinessRoleImmediatelyInvalidatesExistingAccessObject() {
         FixtureDb db=new FixtureDb();db.roles=Collections.singletonList("sy_safety");
-        ShipyardAccess access=db.access();access.require("account:edit");
+        ShipyardAccess access=db.access();access.require("master:edit");
         db.roles=Collections.singletonList("common");
-        rejected(403,"未分配船厂角色",()->access.require("account:edit"));
+        rejected(403,"未分配船厂角色",()->access.require("master:edit"));
     }
 
     @Test public void noRolesIsNotEquivalentToAnUnrestrictedAccount() {
@@ -63,7 +63,19 @@ public class ShipyardAccessMembershipTest {
     @Test public void allSixBusinessRolesRetainExplicitFunctionGrants() {
         for(String role:Arrays.asList("sy_admin","sy_leader","sy_manager","sy_owner","sy_accountant","sy_safety")) {
             FixtureDb db=new FixtureDb();db.roles=Collections.singletonList(role);
-            db.access().require("account:edit");
+            db.access().require("master:edit");
+        }
+    }
+
+    // Q23: account permission management stays with administrators even if a role was granted it.
+    @Test public void onlyAdministratorsKeepAccountManagement() {
+        FixtureDb admin=new FixtureDb();admin.roles=Collections.singletonList("sy_admin");
+        admin.access().require("account:edit");
+        for(String role:Arrays.asList("sy_leader","sy_manager","sy_owner","sy_accountant","sy_safety")) {
+            FixtureDb db=new FixtureDb();db.roles=Collections.singletonList(role);
+            assertFalse(role,db.access().permissions().contains("shipyard:account:edit"));
+            try {db.access().require("account:edit");fail(role+" must not manage accounts");}
+            catch(ServiceException expected) {assertEquals(Integer.valueOf(403),expected.getCode());}
         }
     }
 

@@ -70,6 +70,9 @@ final class ShipyardIdempotency {
                 normalized.put("start", required(request,"start",10));
                 normalized.put("end", required(request,"end",10));
                 normalized.put("amount", decimal(request.get("amount"),true).toPlainString());
+                // Only a non-default payroll month changes the fingerprint, so earlier retries still match.
+                String payrollMonth = str(request,"payrollMonth"), start = required(request,"start",10);
+                if (!payrollMonth.isEmpty() && !start.startsWith(payrollMonth)) normalized.put("payrollMonth", payrollMonth);
             } else if ("加班".equals(type)) {
                 normalized.put("duration", decimal(request.get("duration"),true).toPlainString());
             }
