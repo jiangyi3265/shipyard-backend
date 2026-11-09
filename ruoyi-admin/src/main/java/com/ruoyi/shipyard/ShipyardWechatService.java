@@ -99,6 +99,7 @@ public class ShipyardWechatService {
         } else { username="wx_"+UUID.randomUUID().toString().replace("-","").substring(0,12);nickname=String.valueOf(row.get("real_name")); }
         Map<String,Object> account=map("username",username,"name",nickname,"status","0","password",userId==0?UUID.randomUUID().toString():"","roleIds",roleIds,"projectIds",projectIds);
         if(userId!=0) account.put("id",userId);
+        if(body.containsKey("teamCategory")) account.put("teamCategory",body.get("teamCategory"));
         admin.account(account);
         if(userId==0) userId=db.queryForObject("SELECT user_id FROM sys_user WHERE user_name=?",Long.class,username);
         db.update("UPDATE sy_wechat_registration SET status='approved',user_id=?,review_reason='',reviewed_by=?,reviewed_at=NOW(),version=version+1 WHERE id=?",userId,access.uid(),id);

@@ -25,6 +25,8 @@ public class ShipyardAccess {
         return db.queryForList("SELECT r.role_key FROM sys_role r JOIN sys_user_role ur ON ur.role_id=r.role_id WHERE ur.user_id=? AND r.status='0' AND r.del_flag='0'", String.class, uid());
     }
     public Set<String> permissions() {
+        // A menu grant alone must not admit an account without an active shipyard role.
+        member();
         if (admin()) return new HashSet<>(Collections.singletonList("*:*:*"));
         Set<String> grants=new HashSet<>(db.queryForList("SELECT DISTINCT m.perms FROM sys_menu m JOIN sys_role_menu rm ON rm.menu_id=m.menu_id JOIN sys_role r ON r.role_id=rm.role_id JOIN sys_user_role ur ON ur.role_id=r.role_id WHERE ur.user_id=? AND r.status='0' AND r.del_flag='0' AND m.status='0' AND m.perms LIKE 'shipyard:%'", String.class, uid()));
         if(allProjects()) grants.add("shipyard:finance:view");

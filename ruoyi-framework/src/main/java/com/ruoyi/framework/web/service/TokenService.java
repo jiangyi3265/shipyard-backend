@@ -25,7 +25,7 @@ import io.jsonwebtoken.SignatureAlgorithm;
 
 /**
  * token验证处理
- * 
+ *
  * @author ruoyi
  */
 @Component
@@ -56,7 +56,7 @@ public class TokenService
 
     /**
      * 获取用户身份信息
-     * 
+     *
      * @return 用户信息
      */
     public LoginUser getLoginUser(HttpServletRequest request)
@@ -108,10 +108,31 @@ public class TokenService
     /** Revoke every cached device session after a password reset. */
     public void revokeUserSessions(Long userId)
     {
+        revokeOtherUserSessions(userId, null);
+    }
+
+    /** Keep only the caller's already-live session when they change their own password. */
+    public void revokeOtherUserSessions(Long userId, String preservedToken)
+    {
         for (String key : redisCache.keys(CacheConstants.LOGIN_TOKEN_KEY + "*"))
         {
             LoginUser session = redisCache.getCacheObject(key);
-            if (session != null && userId.equals(session.getUserId()))
+            if (session != null && userId.equals(session.getUserId())
+                    && (StringUtils.isEmpty(preservedToken) || !preservedToken.equals(session.getToken())))
+            {
+                redisCache.deleteObject(key);
+            }
+        }
+    }
+
+    /** A role's permissions and data scope are snapshots in every member's session. */
+    public void revokeRoleSessions(Long roleId)
+    {
+        for (String key : redisCache.keys(CacheConstants.LOGIN_TOKEN_KEY + "*"))
+        {
+            LoginUser session = redisCache.getCacheObject(key);
+            if (session != null && session.getUser() != null && session.getUser().getRoles() != null
+                    && session.getUser().getRoles().stream().anyMatch(role -> roleId.equals(role.getRoleId())))
             {
                 redisCache.deleteObject(key);
             }
@@ -120,7 +141,7 @@ public class TokenService
 
     /**
      * 创建令牌
-     * 
+     *
      * @param loginUser 用户信息
      * @return 令牌
      */
@@ -129,7 +150,9 @@ public class TokenService
         String token = IdUtils.fastUUID();
         loginUser.setToken(token);
         setUserAgent(loginUser);
-        refreshToken(loginUser);
+        setSessionLifetime(loginUser);
+        // Only a newly authenticated login may create a session key.
+        redisCache.setCacheObject(getTokenKey(token), loginUser, expireTime, TimeUnit.MINUTES);
 
         Map<String, Object> claims = new HashMap<>();
         claims.put(Constants.LOGIN_USER_KEY, token);
@@ -139,7 +162,7 @@ public class TokenService
 
     /**
      * 验证令牌有效期，相差不足20分钟，自动刷新缓存
-     * 
+     *
      * @param loginUser 登录信息
      * @return 令牌
      */
@@ -155,21 +178,26 @@ public class TokenService
 
     /**
      * 刷新令牌有效期
-     * 
+     *
      * @param loginUser 登录信息
      */
     public void refreshToken(LoginUser loginUser)
     {
+        setSessionLifetime(loginUser);
+        // A request may still hold LoginUser after logout or an administrator revokes it.
+        // SET XX makes the existence check and write atomic, so renewal cannot restore that session.
+        redisCache.setCacheObjectIfPresent(getTokenKey(loginUser.getToken()), loginUser, expireTime, TimeUnit.MINUTES);
+    }
+
+    private void setSessionLifetime(LoginUser loginUser)
+    {
         loginUser.setLoginTime(System.currentTimeMillis());
         loginUser.setExpireTime(loginUser.getLoginTime() + expireTime * MILLIS_MINUTE);
-        // 根据uuid将loginUser缓存
-        String userKey = getTokenKey(loginUser.getToken());
-        redisCache.setCacheObject(userKey, loginUser, expireTime, TimeUnit.MINUTES);
     }
 
     /**
      * 设置用户代理信息
-     * 
+     *
      * @param loginUser 登录信息
      */
     public void setUserAgent(LoginUser loginUser)

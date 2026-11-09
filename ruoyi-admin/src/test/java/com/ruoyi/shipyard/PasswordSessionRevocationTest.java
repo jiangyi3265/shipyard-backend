@@ -17,6 +17,8 @@ import com.ruoyi.common.core.redis.RedisCache;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.framework.web.service.TokenService;
 import com.ruoyi.system.service.ISysUserService;
+import com.ruoyi.system.service.ISysRoleService;
+import com.ruoyi.system.service.ISysDeptService;
 import com.ruoyi.web.controller.system.SysProfileController;
 import com.ruoyi.web.controller.system.SysUserController;
 import static org.junit.Assert.*;
@@ -31,6 +33,7 @@ public class PasswordSessionRevocationTest {
     private ISysUserService users;
     private SysUserController accounts;
     private SysProfileController profile;
+    private ISysRoleService roles;
     private static final String BEFORE="Before_fixture_123!",AFTER="After_fixture_456!";
 
     @Before public void setup() {
@@ -40,6 +43,10 @@ public class PasswordSessionRevocationTest {
         when(redis.deleteObject(anyString())).thenAnswer(a->cached.remove(a.getArgument(0))!=null);
         doAnswer(a->{cached.put(a.getArgument(0),a.getArgument(1));return null;})
             .when(redis).setCacheObject(anyString(),any(),anyInt(),eq(TimeUnit.MINUTES));
+        when(redis.setCacheObjectIfPresent(anyString(),any(),anyInt(),eq(TimeUnit.MINUTES))).thenAnswer(a->{
+            String key=a.getArgument(0);if(!cached.containsKey(key))return false;
+            cached.put(key,a.getArgument(1));return true;
+        });
         tokens=new TokenService();
         ReflectionTestUtils.setField(tokens,"redisCache",redis);
         ReflectionTestUtils.setField(tokens,"header","Authorization");
@@ -52,6 +59,9 @@ public class PasswordSessionRevocationTest {
         when(users.resetUserPwd(anyLong(),anyString())).thenAnswer(a->{hashes.put(a.getArgument(0),a.getArgument(1));return 1;});
         accounts=new SysUserController();profile=new SysProfileController();
         ReflectionTestUtils.setField(accounts,"userService",users);ReflectionTestUtils.setField(accounts,"tokenService",tokens);
+        roles=mock(ISysRoleService.class);
+        ReflectionTestUtils.setField(accounts,"roleService",roles);
+        ReflectionTestUtils.setField(accounts,"deptService",mock(ISysDeptService.class));
         ReflectionTestUtils.setField(profile,"userService",users);ReflectionTestUtils.setField(profile,"tokenService",tokens);
         RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest()));
     }
@@ -86,5 +96,43 @@ public class PasswordSessionRevocationTest {
         SysUser reset=user(10);reset.setPassword(AFTER);
         assertEquals(500,accounts.resetPwd(reset).get(AjaxResult.CODE_TAG));
         assertNotNull(authenticated(current));assertNotNull(authenticated(otherDevice));
+    }
+    @Test public void nativeDisableRevokesEveryOldDeviceSession() {
+        String first=login(10),second=login(10),other=login(20);as(other);
+        when(users.updateUserStatus(any(SysUser.class))).thenReturn(1);
+        SysUser target=user(10);target.setStatus("1");
+        assertEquals(200,accounts.changeStatus(target).get(AjaxResult.CODE_TAG));
+        assertNull(authenticated(first));assertNull(authenticated(second));assertNotNull(authenticated(other));
+    }
+    @Test public void nativeUserEditRevokesCachedRolesAndPermissions() {
+        String target=login(10),other=login(20);as(other);
+        when(users.checkUserNameUnique(any(SysUser.class))).thenReturn(true);
+        when(users.updateUser(any(SysUser.class))).thenReturn(1);
+        SysUser changed=user(10);changed.setRoleIds(new Long[]{41001L});
+        assertEquals(200,accounts.edit(changed).get(AjaxResult.CODE_TAG));
+        assertNull(authenticated(target));assertNotNull(authenticated(other));
+    }
+    @Test public void nativeRoleAssignmentRevokesOldDeviceSessions() {
+        String first=login(10),second=login(10),other=login(20);as(other);
+        assertEquals(200,accounts.insertAuthRole(10L,new Long[]{41001L}).get(AjaxResult.CODE_TAG));
+        verify(users).insertUserAuth(eq(10L),any(Long[].class));
+        assertNull(authenticated(first));assertNull(authenticated(second));assertNotNull(authenticated(other));
+    }
+    @Test public void nativeDeletionRevokesTargetSessionsOnly() {
+        String first=login(10),second=login(10),other=login(20);as(other);
+        when(users.deleteUserByIds(any(Long[].class))).thenReturn(1);
+        assertEquals(200,accounts.remove(new Long[]{10L}).get(AjaxResult.CODE_TAG));
+        assertNull(authenticated(first));assertNull(authenticated(second));assertNotNull(authenticated(other));
+    }
+    @Test public void failedAccountMutationsKeepExistingSessions() {
+        String target=login(10),other=login(20);as(other);
+        when(users.checkUserNameUnique(any(SysUser.class))).thenReturn(true);
+        assertEquals(500,accounts.changeStatus(user(10)).get(AjaxResult.CODE_TAG));
+        assertEquals(500,accounts.edit(user(10)).get(AjaxResult.CODE_TAG));
+        assertEquals(500,accounts.remove(new Long[]{10L}).get(AjaxResult.CODE_TAG));
+        doThrow(new IllegalStateException("fixture persistence failure")).when(users).insertUserAuth(eq(10L),any(Long[].class));
+        try {accounts.insertAuthRole(10L,new Long[]{41001L});fail("Expected failed role assignment");}
+        catch(IllegalStateException expected){assertEquals("fixture persistence failure",expected.getMessage());}
+        assertNotNull(authenticated(target));assertNotNull(authenticated(other));
     }
 }

@@ -162,7 +162,7 @@ public class ShipyardService {
             content.put("hours",hours);
             for(Long wid:workers) {
                 Map<String,Object> worker=one("SELECT * FROM sy_worker WHERE id=? AND active=1 FOR UPDATE",wid);
-                ShipyardSnapshots.rememberWork(content,worker,str(worker,"name"));
+                ShipyardSnapshots.rememberWork(content,ShipyardCrews.snapshot(db,worker),str(worker,"name"));
                 BigDecimal rate=(BigDecimal)worker.get("rate");
                 BigDecimal h="包工".equals(type)?BigDecimal.ZERO:decimal("加班".equals(type)?b.get("duration"):hours.get(wid.toString()),true);
                 check(h.compareTo(new BigDecimal("24"))<=0,"单日工时不能超过24小时");
@@ -184,7 +184,7 @@ public class ShipyardService {
                 check(!((List<?>)content.get("files")).isEmpty(),"报销必须上传发票凭证"); content.put("category",category); title=category+"报销";
             } else {
                 long worker=number(b.get("person")); Map<String,Object> person=one("SELECT * FROM sy_worker WHERE id=? AND active=1 FOR UPDATE",worker);
-                content.put("person",worker);ShipyardSnapshots.rememberPerson(content,person);title="安全罚款";
+                content.put("person",worker);ShipyardSnapshots.rememberPerson(content,ShipyardCrews.snapshot(db,person));title="安全罚款";
             }
         }
         content.put(ShipyardIdempotency.META,old==null?ShipyardIdempotency.identity(b,day):ShipyardIdempotency.original(old));
@@ -208,6 +208,7 @@ public class ShipyardService {
         check(number(r.get("created_by"))!=access.uid(),"申请人不能审批自己的单据");
         JSONObject content=body(r);
         if("待负责人签字".equals(status)) check(number(content.get("managerId"))!=access.uid(),"负责人和项目经理须分别签字");
+        check(b.get("accept") instanceof Boolean,"请选择有效的审批结果");
         boolean accept=Boolean.TRUE.equals(b.get("accept"));
         String opinion=str(b,"opinion"); check(opinion.length()<=500,"审批意见过长");
         if(!accept) check(!opinion.isEmpty(),"退回必须填写原因");
@@ -360,7 +361,7 @@ public class ShipyardService {
             // A ledger editor can verify their own manual entries without gaining access to payroll or all project finances.
             if(!finance && ledgerEditor) transactions.addAll(db.queryForList("SELECT l.id,l.project_id AS projectId,p.name AS ship,l.title,l.amount,DATE_FORMAT(l.business_date,'%Y-%m-%d') AS date,DATE_FORMAT(l.created_at,'%H:%i') AS time,l.note,l.source_kind AS source,l.source_id AS sourceId FROM sy_ledger l JOIN sy_project p ON p.id=l.project_id WHERE l.project_id=? AND l.created_by=? AND l.source_kind='manual' ORDER BY l.business_date DESC,l.created_at DESC",pid,access.uid()));
             if(finance) {
-                payroll.addAll(db.queryForList("SELECT l.id,l.worker_id AS workerId,l.worker_name AS name,l.amount,l.hours,l.rate,l.multiplier,l.payment_id AS paymentId,r.type AS label,r.project_id AS projectId,DATE_FORMAT(r.business_date,'%Y-%m') AS month,p.name AS ship FROM sy_work_line l JOIN sy_record r ON r.id=l.record_id JOIN sy_project p ON p.id=r.project_id WHERE r.project_id=? AND r.status IN ('待结算','已结算') ORDER BY r.business_date,l.id",pid));
+                payroll.addAll(db.queryForList("SELECT l.id,l.worker_id AS workerId,l.worker_name AS name,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.body,CONCAT('$.workSnapshot.\"',l.worker_id,'\".code'))),w.code) AS code,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.body,CONCAT('$.workSnapshot.\"',l.worker_id,'\".team'))),w.team) AS team,l.amount,l.hours,l.rate,l.multiplier,l.payment_id AS paymentId,r.type AS label,r.project_id AS projectId,DATE_FORMAT(r.business_date,'%Y-%m') AS month,DATE_FORMAT(r.business_date,'%Y-%m-%d') AS date,p.name AS ship FROM sy_work_line l JOIN sy_record r ON r.id=l.record_id JOIN sy_project p ON p.id=r.project_id LEFT JOIN sy_worker w ON w.id=l.worker_id WHERE r.project_id=? AND r.kind='用工' AND r.status IN ('待结算','已结算') ORDER BY r.business_date,l.id",pid));
                 transactions.addAll(db.queryForList("SELECT l.id,l.project_id AS projectId,p.name AS ship,l.title,l.amount,DATE_FORMAT(l.business_date,'%Y-%m-%d') AS date,DATE_FORMAT(l.created_at,'%H:%i') AS time,l.note,l.source_kind AS source,l.source_id AS sourceId FROM sy_ledger l JOIN sy_project p ON p.id=l.project_id WHERE l.project_id=? ORDER BY l.business_date DESC,l.created_at DESC",pid));
                 project.put("wages",db.queryForObject("SELECT COALESCE(SUM(amount),0) FROM sy_record WHERE project_id=? AND kind='用工' AND status IN ('待结算','已结算')",BigDecimal.class,pid));
                 project.put("reimbursements",db.queryForObject("SELECT COALESCE(SUM(amount),0) FROM sy_record WHERE project_id=? AND kind='报销' AND status IN ('待付款','已付款')",BigDecimal.class,pid));
@@ -373,7 +374,10 @@ public class ShipyardService {
         Set<String> visible=records.stream().map(r->str(r,"id")).collect(Collectors.toSet());
         for(Map<String,Object> a:db.queryForList("SELECT a.id,a.record_id AS recordId,a.action AS title,a.opinion AS detail,a.created_at AS time,(n.audit_id IS NOT NULL) AS `read` FROM sy_audit a LEFT JOIN sy_notice_read n ON n.audit_id=a.id AND n.user_id=? ORDER BY a.id DESC",access.uid())) if(visible.contains(str(a,"recordId"))) notices.add(a);
         Map<String,Object> user=one("SELECT user_id AS id,user_name AS username,nick_name AS name FROM sys_user WHERE user_id=?",access.uid());
-        return map("user",user,"roles",access.uid()==1?Collections.singletonList("admin"):access.roles(),"grants",grants,"projects",projects,"areas",areas,"people",db.queryForList("SELECT id,name,code,team,rate,active FROM sy_worker WHERE active=1 ORDER BY id"),"workerArchive",admin||grants.contains("shipyard:master:edit")?db.queryForList("SELECT id,name,code,team,rate,active FROM sy_worker ORDER BY active DESC,id"):Collections.emptyList(),"records",records,"payroll",payroll,"transactions",transactions,"attendance",attendance,"notifications",notices,"serverDate",LocalDate.now().toString());
+        List<String> userTeams=db.queryForList("SELECT team_category FROM sy_user_team WHERE user_id=?",String.class,access.uid());
+        user.put("teamCategory",userTeams.isEmpty()?"":userTeams.get(0));
+        List<Map<String,Object>> crews=ShipyardCrews.list(db);
+        return map("crews",crews,"crewLeaders",admin||grants.contains("shipyard:master:edit")?ShipyardCrews.leaders(db):Collections.emptyList(),"user",user,"roles",access.uid()==1?Collections.singletonList("admin"):access.roles(),"grants",grants,"projects",projects,"areas",areas,"people",ShipyardCrews.decorate(db.queryForList("SELECT id,name,code,team,team_category AS teamCategory,crew_id AS crewId,rate,active FROM sy_worker WHERE active=1 ORDER BY id"),crews),"workerArchive",admin||grants.contains("shipyard:master:edit")?ShipyardCrews.decorate(db.queryForList("SELECT id,name,code,team,team_category AS teamCategory,crew_id AS crewId,rate,active FROM sy_worker ORDER BY active DESC,id"),crews):Collections.emptyList(),"records",records,"payroll",payroll,"monthlyPayroll",ShipyardMonthlyPayroll.build(payroll),"transactions",transactions,"attendance",attendance,"notifications",notices,"serverDate",LocalDate.now().toString());
     }
     @Transactional public void readNotice(long id) {
         Map<String,Object> a=one("SELECT record_id FROM sy_audit WHERE id=?",id); access.record(raw(str(a,"record_id"),false));

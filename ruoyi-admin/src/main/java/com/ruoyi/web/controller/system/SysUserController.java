@@ -35,7 +35,7 @@ import com.ruoyi.system.service.ISysUserService;
 
 /**
  * 用户信息
- * 
+ *
  * @author ruoyi
  */
 @RestController
@@ -172,7 +172,13 @@ public class SysUserController extends BaseController
             return error("修改用户'" + user.getUserName() + "'失败，邮箱账号已存在");
         }
         user.setUpdateBy(getUsername());
-        return toAjax(userService.updateUser(user));
+        int rows = userService.updateUser(user);
+        if (rows > 0)
+        {
+            // Cached sessions retain the old roles, permissions and account status.
+            tokenService.revokeUserSessions(user.getUserId());
+        }
+        return toAjax(rows);
     }
 
     /**
@@ -187,7 +193,15 @@ public class SysUserController extends BaseController
         {
             return error("当前用户不能删除");
         }
-        return toAjax(userService.deleteUserByIds(userIds));
+        int rows = userService.deleteUserByIds(userIds);
+        if (rows > 0)
+        {
+            for (Long userId : userIds)
+            {
+                tokenService.revokeUserSessions(userId);
+            }
+        }
+        return toAjax(rows);
     }
 
     /**
@@ -221,7 +235,12 @@ public class SysUserController extends BaseController
         userService.checkUserAllowed(user);
         userService.checkUserDataScope(user.getUserId());
         user.setUpdateBy(getUsername());
-        return toAjax(userService.updateUserStatus(user));
+        int rows = userService.updateUserStatus(user);
+        if (rows > 0)
+        {
+            tokenService.revokeUserSessions(user.getUserId());
+        }
+        return toAjax(rows);
     }
 
     /**
@@ -250,6 +269,7 @@ public class SysUserController extends BaseController
         userService.checkUserDataScope(userId);
         roleService.checkRoleDataScope(roleIds);
         userService.insertUserAuth(userId, roleIds);
+        tokenService.revokeUserSessions(userId);
         return success();
     }
 

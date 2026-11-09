@@ -19,12 +19,9 @@ import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.domain.entity.SysDept;
 import com.ruoyi.common.core.domain.entity.SysRole;
 import com.ruoyi.common.core.domain.entity.SysUser;
-import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.enums.BusinessType;
-import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.common.utils.poi.ExcelUtil;
-import com.ruoyi.framework.web.service.SysPermissionService;
 import com.ruoyi.framework.web.service.TokenService;
 import com.ruoyi.system.domain.SysUserRole;
 import com.ruoyi.system.service.ISysDeptService;
@@ -33,7 +30,7 @@ import com.ruoyi.system.service.ISysUserService;
 
 /**
  * 角色信息
- * 
+ *
  * @author ruoyi
  */
 @RestController
@@ -45,9 +42,6 @@ public class SysRoleController extends BaseController
 
     @Autowired
     private TokenService tokenService;
-
-    @Autowired
-    private SysPermissionService permissionService;
 
     @Autowired
     private ISysUserService userService;
@@ -125,17 +119,11 @@ public class SysRoleController extends BaseController
             return error("修改角色'" + role.getRoleName() + "'失败，角色权限已存在");
         }
         role.setUpdateBy(getUsername());
-        
+
         if (roleService.updateRole(role) > 0)
         {
-            // 更新缓存用户权限
-            LoginUser loginUser = getLoginUser();
-            if (StringUtils.isNotNull(loginUser.getUser()) && !loginUser.getUser().isAdmin())
-            {
-                loginUser.setUser(userService.selectUserByUserName(loginUser.getUser().getUserName()));
-                loginUser.setPermissions(permissionService.getMenuPermission(loginUser.getUser()));
-                tokenService.setLoginUser(loginUser);
-            }
+            // All affected devices must reload their role and permission snapshots.
+            tokenService.revokeRoleSessions(role.getRoleId());
             return success();
         }
         return error("修改角色'" + role.getRoleName() + "'失败，请联系管理员");
@@ -151,7 +139,12 @@ public class SysRoleController extends BaseController
     {
         roleService.checkRoleAllowed(role);
         roleService.checkRoleDataScope(role.getRoleId());
-        return toAjax(roleService.authDataScope(role));
+        int rows = roleService.authDataScope(role);
+        if (rows > 0)
+        {
+            tokenService.revokeRoleSessions(role.getRoleId());
+        }
+        return toAjax(rows);
     }
 
     /**
@@ -165,7 +158,12 @@ public class SysRoleController extends BaseController
         roleService.checkRoleAllowed(role);
         roleService.checkRoleDataScope(role.getRoleId());
         role.setUpdateBy(getUsername());
-        return toAjax(roleService.updateRoleStatus(role));
+        int rows = roleService.updateRoleStatus(role);
+        if (rows > 0)
+        {
+            tokenService.revokeRoleSessions(role.getRoleId());
+        }
+        return toAjax(rows);
     }
 
     /**
@@ -176,7 +174,15 @@ public class SysRoleController extends BaseController
     @DeleteMapping("/{roleIds}")
     public AjaxResult remove(@PathVariable Long[] roleIds)
     {
-        return toAjax(roleService.deleteRoleByIds(roleIds));
+        int rows = roleService.deleteRoleByIds(roleIds);
+        if (rows > 0)
+        {
+            for (Long roleId : roleIds)
+            {
+                tokenService.revokeRoleSessions(roleId);
+            }
+        }
+        return toAjax(rows);
     }
 
     /**
@@ -221,7 +227,12 @@ public class SysRoleController extends BaseController
     @PutMapping("/authUser/cancel")
     public AjaxResult cancelAuthUser(@RequestBody SysUserRole userRole)
     {
-        return toAjax(roleService.deleteAuthUser(userRole));
+        int rows = roleService.deleteAuthUser(userRole);
+        if (rows > 0)
+        {
+            tokenService.revokeUserSessions(userRole.getUserId());
+        }
+        return toAjax(rows);
     }
 
     /**
@@ -232,7 +243,15 @@ public class SysRoleController extends BaseController
     @PutMapping("/authUser/cancelAll")
     public AjaxResult cancelAuthUserAll(Long roleId, Long[] userIds)
     {
-        return toAjax(roleService.deleteAuthUsers(roleId, userIds));
+        int rows = roleService.deleteAuthUsers(roleId, userIds);
+        if (rows > 0)
+        {
+            for (Long userId : userIds)
+            {
+                tokenService.revokeUserSessions(userId);
+            }
+        }
+        return toAjax(rows);
     }
 
     /**
@@ -244,7 +263,15 @@ public class SysRoleController extends BaseController
     public AjaxResult selectAuthUserAll(Long roleId, Long[] userIds)
     {
         roleService.checkRoleDataScope(roleId);
-        return toAjax(roleService.insertAuthUsers(roleId, userIds));
+        int rows = roleService.insertAuthUsers(roleId, userIds);
+        if (rows > 0)
+        {
+            for (Long userId : userIds)
+            {
+                tokenService.revokeUserSessions(userId);
+            }
+        }
+        return toAjax(rows);
     }
 
     /**

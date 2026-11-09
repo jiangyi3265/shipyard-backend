@@ -6,8 +6,10 @@ import {execFileSync,spawn} from 'node:child_process';
 import {credentials} from './test-env.mjs';
 
 if(process.env.SHIPYARD_DB_PASSWORD===undefined) throw new Error('Set SHIPYARD_DB_PASSWORD for the isolated local MySQL instance.');
+const testDbPort=Number(process.env.SHIPYARD_TEST_DB_PORT);
+if(!Number.isInteger(testDbPort)||testDbPort<1024||testDbPort>65535) throw new Error('Set SHIPYARD_TEST_DB_PORT explicitly to the isolated local MySQL port.');
 const database='shipyard33_test',base='http://127.0.0.1:8081',tokens={},results=[],fixtures=[];
-const mysqlArgs=['--host=127.0.0.1','--port=3306',`--user=${process.env.SHIPYARD_DB_USER||'root'}`,'--connect-timeout=5','--default-character-set=utf8mb4','--batch','--skip-column-names','--unbuffered',database];
+const mysqlArgs=['--host=127.0.0.1',`--port=${testDbPort}`,`--user=${process.env.SHIPYARD_DB_USER||'root'}`,'--connect-timeout=5','--default-character-set=utf8mb4','--batch','--skip-column-names','--unbuffered',database];
 const mysqlEnv={...process.env,MYSQL_PWD:process.env.SHIPYARD_DB_PASSWORD};
 const sql=query=>execFileSync('mysql',mysqlArgs,{input:query,env:mysqlEnv,encoding:'utf8',windowsHide:true}).trim();
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));

@@ -110,11 +110,11 @@ public class ShipyardWorkerLifecycleTest {
             when(access.permissions()).thenReturn(allowed?Collections.singleton("shipyard:master:edit"):Collections.emptySet());
             when(db.queryForList("SELECT user_id AS id,user_name AS username,nick_name AS name FROM sys_user WHERE user_id=?",7L))
                     .thenReturn(Collections.singletonList(map("id",7,"name","用户")));
-            when(db.queryForList("SELECT id,name,code,team,rate,active FROM sy_worker ORDER BY active DESC,id"))
+            when(db.queryForList("SELECT id,name,code,team,team_category AS teamCategory,crew_id AS crewId,rate,active FROM sy_worker ORDER BY active DESC,id"))
                     .thenReturn(Collections.singletonList(worker()));
             Map<String,Object> result=new ShipyardService(db,access).bootstrap();
             assertEquals(allowed?1:0,((List<?>)result.get("workerArchive")).size());
-            if(!allowed) verify(db,never()).queryForList("SELECT id,name,code,team,rate,active FROM sy_worker ORDER BY active DESC,id");
+            if(!allowed) verify(db,never()).queryForList("SELECT id,name,code,team,team_category AS teamCategory,crew_id AS crewId,rate,active FROM sy_worker ORDER BY active DESC,id");
         }
     }
 }
